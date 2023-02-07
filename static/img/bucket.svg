@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 40 40" xml:space="preserve">
+<g>
+<path 
+  d="
+    M 34 34 
+    L 6 34 
+    Q 0 25 2 12 
+    L 30 2
+    Q 24 20 34 34
+  "
+  stroke="black"
+  fill="palegreen"
+  stroke-linecap="round"
+/>
+<path 
+  d="
+    M 30 2
+    Q 24 16 34 34
+    L 34.5 34
+    Q 40 20 30.75 1.75
+  "
+  stroke="rgba(0, 0, 0, 0.5)"
+  fill="rgb(150, 150, 150)"
+  stroke-linecap="round"
+/>
+<path 
+  d="
+    M 6 16
+    L 18 12
+    C 24 10 25 18 22 19
+    L 6.75 21.5
+    Q 5 19 6 16
+    M 10 31
+    L 24 30.5
+    C 28 28 26 24 22 24
+    L 7.75 26
+    Q 8 29 10 31
+  "
+  stroke="rgba(0, 0, 0, 0.75)"
+  fill="rgba(0, 0, 0, 0.2)"
+  stroke-linecap="round"
+/>
+<path 
+  d="
+    M 24 9
+    Q 6 6 8 9
+  "
+  stroke="black"
+  fill="transparent"
+  stroke-linecap="round"
+/>
+<circle cx="24" cy="9" r="1.25" />
+</g>
+</svg>
