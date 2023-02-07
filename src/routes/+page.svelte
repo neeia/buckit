@@ -4,33 +4,28 @@
   import BucketItem from "src/components/BucketItem.svelte";
   import type Task from "src/types/Task";
   import type Collection from "src/types/Collection";
-  import { tick } from "svelte";
-  import isTask from "src/util/isTask";
+  import { afterUpdate, onMount, tick } from "svelte";
+  import type Buckit from "src/types/Buckit";
+  import { bucketMime, taskMime } from "src/util/mimes";
+  import * as Realm from "realm-web";
+  import UserAccount from "src/components/UserAccount.svelte";
 
-  /*
   const app = new Realm.App({ id: "buckit-bhkwv" });
+  let user: Realm.User | null = app.currentUser;
 
-  async function loginAnonymous() {
-    // Create an anonymous credential
-    const credentials = Realm.Credentials.anonymous();
+  async function login(email: string, password: string) {
+    // Create an email/password credential
+    const credentials = Realm.Credentials.emailPassword(email, password);
     try {
       // Authenticate the user
-      const user = await app.logIn(credentials);
+      user = await app.logIn(credentials);
       // `App.currentUser` updates to match the logged in user
-      console.assert(app.currentUser && user.id === app.currentUser.id);
+      console.assert(user.id === app.currentUser?.id);
       return user;
     } catch (err) {
       console.error("Failed to log in", err);
     }
   }
-
-  const data = loginAnonymous().then((user) => {
-    if (user) {
-      console.log("Successfully logged in!", user.id);
-      return user.functions.addUser("test");
-    } else console.log("Failed to log in");
-  });
-  */
 
   let data: Collection;
   collection.subscribe((value) => {
@@ -57,13 +52,30 @@
     document.body.style.cursor = "";
   }
 
-  let bucketEls: Bucket[] = [];
+  let bucketObjs: Bucket[] = [];
+  function validateAddBucket(event: DragEvent) {
+    if (event.dataTransfer) {
+      if (event.dataTransfer.types.includes(bucketMime)) {
+        return;
+      } else if (event.dataTransfer.types.includes(taskMime)) {
+        event.preventDefault();
+      }
+    }
+  }
   async function addBucket(event?: DragEvent) {
     let dropData: Task;
+    dragging = false;
     try {
-      if (event?.dataTransfer && draggedTaskTarget) {
-        dropData = JSON.parse(event.dataTransfer.getData("text/plain"));
-        deleteItem();
+      if (event && event.dataTransfer) {
+        if (event.dataTransfer.types.includes(bucketMime)) {
+          return;
+        } else if (
+          event.dataTransfer.types.includes(taskMime) &&
+          draggedTaskTarget
+        ) {
+          dropData = JSON.parse(event.dataTransfer.getData("text/plain"));
+          deleteItem();
+        }
       }
     } catch {
       return;
@@ -71,13 +83,14 @@
     collection.update((coll: Collection) => {
       coll.buckets.unshift({
         name: "",
+        timestamp: Date.now(),
         tasks: dropData
           ? [
               {
                 name: dropData.name,
                 description: dropData.description,
                 completed: dropData.completed,
-                timestamp: dropData.timestamp,
+                timestamp: Date.now(),
               },
             ]
           : [],
@@ -85,7 +98,7 @@
       return coll;
     });
     await tick();
-    bucketEls[0].focus();
+    bucketObjs[0].focus();
   }
 
   let newestItem: HTMLTextAreaElement;
@@ -98,7 +111,7 @@
   async function addTask(bucket: number) {
     collection.update((coll: Collection) => {
       emptyTask.timestamp = Date.now();
-      coll.buckets[bucket].tasks.unshift({ ...emptyTask });
+      coll.buckets[bucket].tasks.push({ ...emptyTask });
       return coll;
     });
     await tick();
@@ -108,7 +121,7 @@
   let draggedTaskIndex: { bucket: number; index?: number } | undefined;
   let draggedTaskTarget: { bucket: number; index?: number } | undefined;
 
-  let dropIndicatorEl: HTMLDivElement;
+  let dragging = false;
   function dragStart(event: DragEvent, bucket: number, index?: number) {
     enterCount = 0;
     draggedTaskTarget = undefined;
@@ -119,23 +132,34 @@
     draggedTaskIndex = { bucket, index };
     if (event.dataTransfer) {
       event.dataTransfer.setData("text/plain", JSON.stringify(dragItemData));
+      event.dataTransfer.setData(
+        index === undefined ? bucketMime : taskMime,
+        ""
+      );
       event.dataTransfer.dropEffect = "move";
     }
+    dragging = true;
   }
   // used to determine if over bucket or child
   var enterTarget: EventTarget | null = null;
 
-  let currentOverBucket: HTMLUListElement;
-  $: childRects =
-    currentOverBucket &&
-    [...currentOverBucket.children].map((el) => el.getBoundingClientRect());
-  function dragOver(event: DragEvent) {
-    if (!draggedTaskTarget) return;
+  let taskDIEl: HTMLDivElement;
+  let currentBucketEl: HTMLUListElement;
+  $: taskRects =
+    currentBucketEl &&
+    [...currentBucketEl.children].map((e) => e.getBoundingClientRect());
+  function dragOverTask(event: DragEvent) {
+    if (
+      !draggedTaskTarget ||
+      !event.dataTransfer ||
+      !event.dataTransfer.types.includes(taskMime)
+    )
+      return;
     event.preventDefault();
     enterTarget = event.currentTarget;
     // calculate y-midpoint for each child
-    const childMidYs = childRects.map((rect) => (rect.top + rect.bottom) / 2);
-    const bucketBounds = currentOverBucket.getBoundingClientRect();
+    const childMidYs = taskRects.map((rect) => (rect.top + rect.bottom) / 2);
+    const bucketBounds = currentBucketEl.getBoundingClientRect();
     let i = 0;
     childMidYs.forEach((y) => {
       if (event.clientY > y) {
@@ -144,50 +168,125 @@
     });
     draggedTaskTarget.index = i;
 
-    if (childRects.length === 0 || i === 0) {
+    if (taskRects.length === 0 || i === 0) {
       // empty bucket or before first child
-      dropIndicatorEl.style.top = `${bucketBounds.top}px`;
-    } else if (i === childRects.length) {
+      taskDIEl.style.top = `${bucketBounds.top}px`;
+    } else if (i === taskRects.length) {
       // after last child
-      dropIndicatorEl.style.top = `${childRects[i - 1].bottom + 6}px`;
+      taskDIEl.style.top = `${taskRects[i - 1].bottom + 6}px`;
     } else {
       // general case
-      dropIndicatorEl.style.top = `${
-        (childRects[i].top + childRects[i - 1].bottom) / 2
+      taskDIEl.style.top = `${
+        (taskRects[i].top + taskRects[i - 1].bottom) / 2 - 1
       }px`;
     }
 
     // align and fit indicator horizontally
-    dropIndicatorEl.style.left = `${bucketBounds.left}px`;
-    dropIndicatorEl.style.width = `${bucketBounds.right - bucketBounds.left}px`;
+    taskDIEl.style.left = `${bucketBounds.left}px`;
+    taskDIEl.style.height = "3px";
+    taskDIEl.style.width = `${bucketBounds.right - bucketBounds.left}px`;
   }
-  function dragLeave(event: DragEvent) {
+
+  let bucketDIEl: HTMLDivElement;
+  function dragOverBucket(event: DragEvent) {
+    if (!event.dataTransfer || !event.dataTransfer.types.includes(bucketMime))
+      return;
+    event.preventDefault();
+    enterTarget = event.currentTarget;
+    // calculate y-midpoint for each child
+    let bucketRects =
+      containerEl &&
+      [...containerEl.children].map((e) => e.getBoundingClientRect());
+    const childMidXs = bucketRects.map((rect) => (rect.left + rect.right) / 2);
+    const bucketBounds = containerEl.getBoundingClientRect();
+    let i = 0;
+    childMidXs.forEach((x) => {
+      if (event.clientX > x) {
+        i++;
+      }
+    });
+    draggedTaskTarget = { bucket: i };
+
+    if (bucketRects.length === 0 || i === 0) {
+      // no buckets or before first child
+      bucketDIEl.style.left = `${bucketBounds.left + 4}px`;
+    } else if (i === bucketRects.length) {
+      // after last child
+      bucketDIEl.style.left = `${bucketRects[i - 1].right + 4}px`;
+    } else {
+      // general case
+      bucketDIEl.style.left = `${
+        (bucketRects[i].left + bucketRects[i - 1].right) / 2 - 2
+      }px`;
+    }
+
+    // align and fit indicator horizontally
+    bucketDIEl.style.top = `${bucketBounds.top}px`;
+    bucketDIEl.style.height = `${bucketBounds.bottom - bucketBounds.top}px`;
+  }
+  function dragLeave(event: DragEvent, bucket?: boolean) {
     if (event.target === enterTarget) {
-      dropIndicatorEl.style.top = "";
-      dropIndicatorEl.style.left = "";
+      if (!bucket) taskDIEl.setAttribute("style", "");
+      if (bucket) bucketDIEl.setAttribute("style", "");
     }
   }
-  function drop(event: DragEvent) {
+  async function drop(event: DragEvent) {
     if (!event.dataTransfer || !draggedTaskTarget) return;
-    let dropData: Task;
+    let dropData: Task | Buckit;
     try {
       dropData = JSON.parse(event.dataTransfer.getData("text/plain"));
     } catch {
       return;
     }
-    if (!isTask(dropData)) return;
-    deleteItem();
-    dropIndicatorEl.style.top = "";
-    dropIndicatorEl.style.left = "";
-    let { bucket, index } = draggedTaskTarget;
-    collection.update((coll: Collection) => {
-      if (Number.isInteger(index))
-        coll.buckets[bucket].tasks.splice(index!, 0, dropData);
-      return coll;
-    });
+    if (event.dataTransfer.types.includes(taskMime)) {
+      // Dropped task
+      taskDIEl.setAttribute("style", "");
+      let { bucket, index } = draggedTaskTarget;
+      if (index === undefined) return;
+      if (draggedTaskIndex) {
+        let { bucket: b2, index: i2 } = draggedTaskIndex;
+        deleteItem();
+        if (i2 !== undefined) {
+          if (b2 === bucket && i2 < index) {
+            index--;
+          }
+        }
+      } else {
+        dropData.timestamp = Date.now();
+      }
+      collection.update((coll: Collection) => {
+        coll.buckets[bucket].tasks.splice(index!, 0, dropData as Task);
+        return coll;
+      });
+
+      await tick();
+      (currentBucketEl.children[index] as HTMLElement).focus();
+    } else if (event.dataTransfer.types.includes(bucketMime)) {
+      // Dropped bucket
+      bucketDIEl.setAttribute("style", "");
+      let { bucket } = draggedTaskTarget;
+      if (draggedTaskIndex) {
+        let { bucket: b2 } = draggedTaskIndex;
+        !deleteItem();
+        if (b2 < bucket) {
+          bucket--;
+        }
+      } else {
+        dropData.timestamp = Date.now();
+      }
+      collection.update((coll: Collection) => {
+        coll.buckets.splice(bucket, 0, dropData as Buckit);
+        return coll;
+      });
+
+      await tick();
+      (containerEl.children[bucket] as HTMLElement).focus();
+    }
+    dragging = false;
   }
-  function deleteItem() {
-    if (!draggedTaskIndex) return;
+  function deleteItem(): boolean {
+    dragging = false;
+    if (!draggedTaskIndex) return false;
     const { bucket, index } = draggedTaskIndex;
     collection.update((coll: Collection) => {
       if (Number.isInteger(index)) coll.buckets[bucket].tasks.splice(index!, 1);
@@ -195,6 +294,7 @@
       return coll;
     });
     draggedTaskIndex = undefined;
+    return true;
   }
 
   let enterCount = 0;
@@ -208,73 +308,125 @@
     if (enterCount === 0 && event.dataTransfer?.dropEffect !== "none") {
       deleteItem();
     }
+    dragging = false;
+  }
+
+  onMount(() => {
+    window.addEventListener("resize", checkOverflow);
+    return () => window.removeEventListener("resize", checkOverflow);
+  });
+
+  afterUpdate(checkOverflow);
+
+  function checkOverflow() {
+    if (containerEl.scrollWidth > containerEl.clientWidth) {
+      containerEl.style.marginBottom = "12px";
+    } else {
+      containerEl.style.marginBottom = "";
+    }
   }
 </script>
 
+<svelte:head>
+  <title>Buckit 🪣</title>
+  <meta property="og:title" content="Buckit 🪣" />
+  <meta
+    name="og:description"
+    content="Buckit helps you write your bucket list - what do you want to do before you die?"
+  />
+  <meta name="theme-color" content="#17d171" />
+</svelte:head>
 <div class="container">
-  <div class="app-bar">
-    <h1>Buckit</h1>
-  </div>
-  <section class="controls">
-    <button
-      class="drop-zone add-bucket"
-      on:click={() => addBucket()}
-      on:drop={addBucket}
-      on:dragover={(e) => e.preventDefault()}
-    >
-      <img src="/img/icons/add-bucket.svg" width="32px" height="32px" alt="" />
-      Add Bucket
-    </button>
-    <div
-      class="drop-zone delete-bucket"
-      on:drop={deleteItem}
-      on:dragover={(e) => e.preventDefault()}
-    >
-      <img src="/img/icons/trash-can.svg" width="32px" height="32px" alt="" />
-      Trash Can
+  <div class="aside">
+    <div class="title-user">
+      <h1><img src="/img/title.svg" alt="bucket" class="title" /></h1>
+      <hr />
+      <UserAccount {user} {login} />
     </div>
-  </section>
-  <ol bind:this={containerEl} on:mousedown={handleMouseDown}>
-    {#each data.buckets as bucket, i}
+    <hr />
+    <section class="controls">
+      <button
+        class:dragging
+        class="drop-zone add-bucket"
+        on:click={() => addBucket()}
+        on:dragover={validateAddBucket}
+        on:drop={addBucket}
+      >
+        <img
+          src="/img/icons/add-bucket.svg"
+          width="32px"
+          height="32px"
+          alt=""
+        />
+        Add Bucket
+      </button>
+      <div
+        class:dragging
+        class="drop-zone delete-bucket"
+        on:drop={deleteItem}
+        on:dragover={(e) => e.preventDefault()}
+      >
+        <img src="/img/icons/trash-can.svg" width="32px" height="32px" alt="" />
+        Trash Can
+      </div>
+    </section>
+    <hr />
+  </div>
+  <ol
+    bind:this={containerEl}
+    on:mousedown={handleMouseDown}
+    on:dragover={dragOverBucket}
+    on:dragleave={(e) => dragLeave(e, true)}
+  >
+    {#each data.buckets as bucket, i (bucket.timestamp)}
       <Bucket
-        bind:this={bucketEls[i]}
+        bind:this={bucketObjs[i]}
         bind:name={$collection.buckets[i].name}
         on:click={() => addTask(i)}
-        on:dragover={dragOver}
+        on:dragstart={(e) => dragStart(e, i)}
+        on:dragend={dragEnd}
+        on:dragover={dragOverTask}
         on:dragleave={dragLeave}
         on:drop={drop}
         on:message={(e) => {
-          currentOverBucket = e.detail.ulEl;
+          currentBucketEl = e.detail.ulEl;
           draggedTaskTarget = { bucket: i };
         }}
       >
-        {#each bucket.tasks as task, j}
+        {#each bucket.tasks as task, j (task.timestamp)}
           <BucketItem
-            on:message={(e) => (newestItem = e.detail.textEl)}
             bind:title={$collection.buckets[i].tasks[j].name}
             bind:description={$collection.buckets[i].tasks[j].description}
             bind:completed={$collection.buckets[i].tasks[j].completed}
             on:dragstart={(e) => dragStart(e, i, j)}
             on:dragend={dragEnd}
+            on:message={(e) => (newestItem = e.detail.textEl)}
           />
         {/each}
       </Bucket>
     {/each}
   </ol>
 </div>
-<div class="drop-indicator" bind:this={dropIndicatorEl} />
+<div class="h-drop-indicator" bind:this={taskDIEl} />
+<div class="v-drop-indicator" bind:this={bucketDIEl} />
 <svelte:window on:mouseup={handleMouseUp} on:mousemove={handleMove} />
 <svelte:body on:dragenter={mouseEnter} on:dragleave={mouseLeave} />
 
 <style>
-  div.drop-indicator {
+  div.h-drop-indicator {
     position: absolute;
     height: 3px;
     background-color: darkgreen;
     pointer-events: none;
   }
+  div.v-drop-indicator {
+    position: absolute;
+    width: 4px;
+    background-color: darkgreen;
+    pointer-events: none;
+  }
   :global(html) {
-    height: 100%;
+    height: 100svh;
     width: 100%;
     overflow: hidden;
   }
@@ -285,7 +437,6 @@
     margin: 0;
     height: 100%;
     width: 100%;
-    padding: 1px;
   }
   :global(*) {
     box-sizing: border-box;
@@ -297,35 +448,41 @@
   }
   h1 {
     margin: 0;
+    width: 100%;
+  }
+  img.title {
+    width: 100%;
+    height: auto;
   }
   div.container {
-    display: grid;
-    grid-template-areas: "title content" "controls content";
-    grid-template-columns: auto minmax(0, 100%);
-    grid-template-rows: auto minmax(0, 100%);
+    display: flex;
     height: 100%;
   }
-  div.app-bar {
-    grid-area: title;
+  hr {
+    width: 100%;
+    margin: 0;
+    border: 1px solid var(--app-theme);
+  }
+  div.aside {
     display: flex;
     flex-direction: column;
+    align-items: start;
     background-color: #fafffc;
     width: calc(var(--bucket-width) / 2);
     flex-shrink: 0;
-    box-sizing: border-box;
     padding: 4px 12px;
-    height: calc(100% - 8px);
+  }
+  div.title-user {
+    width: 100%;
   }
   section.controls {
-    grid-area: controls;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: 1fr 1fr;
     background-color: #fafffc;
-    width: calc(var(--bucket-width) / 2);
+    width: 100%;
     flex-shrink: 0;
-    box-sizing: border-box;
     padding: 4px 12px;
-    height: calc(100% - 8px);
+    gap: 4px;
   }
   *.drop-zone {
     display: flex;
@@ -334,39 +491,73 @@
     align-items: center;
     font-size: 14px;
     background-color: transparent;
+    border: 2px solid transparent;
     border-radius: 4px;
     padding: 4px 6px;
-    cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
   }
   *.drop-zone > img {
     width: 100%;
-    height: 100%;
+    height: auto;
+    pointer-events: none;
   }
   button.add-bucket {
-    background-color: transparent;
-    border: 2px solid var(--app-theme);
-    border-radius: 4px;
-    padding: 4px 6px;
     cursor: pointer;
-    user-select: none;
-    -webkit-user-select: none;
+  }
+  button.add-bucket.dragging {
+    border: 2px dashed var(--app-theme);
+    background-color: honeydew;
   }
   div.delete-bucket {
-    background-color: transparent;
-    padding: 4px 6px;
-    cursor: pointer;
-    user-select: none;
-    -webkit-user-select: none;
+    opacity: 0.25;
+  }
+  div.delete-bucket.dragging {
+    opacity: 1;
+    border: 2px dashed crimson;
+    background-color: rgba(255, 100, 100, 0.1);
+  }
+  @media only screen and (max-width: 770px) {
+    div.container {
+      flex-direction: column;
+    }
+    div.aside {
+      flex-direction: row;
+      width: 100%;
+      padding: 4px 12px;
+      gap: 1em;
+    }
+    section.controls {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: none;
+      background-color: #fafffc;
+      width: min-content;
+      height: 100%;
+      padding: 4px;
+      gap: 4px;
+    }
+    hr {
+      display: none;
+    }
+    *.drop-zone {
+      flex-direction: row;
+      font-size: 14px;
+      padding: 0px;
+      text-align: center;
+      gap: 2px;
+    }
+    *.drop-zone > img {
+      height: 3em;
+      width: auto;
+    }
   }
   ol {
-    grid-area: content;
     display: flex;
     gap: 8px;
     margin: 0px;
     padding: 0px 12px;
-    height: calc(100% - 12px);
+    padding-block: 8px;
+    height: 100%;
     max-width: 100%;
     overflow-x: auto;
     scrollbar-color: rgba(155, 155, 155, 0.5);
@@ -388,9 +579,9 @@
     background: rgba(155, 155, 155, 0.1);
     border-radius: 8px;
   }
-  @media only screen and (max-width: 770) {
+  @media only screen and (max-width: 770px) {
     ol::-webkit-scrollbar {
-      height: 48px;
+      height: 32px;
     }
   }
 </style>

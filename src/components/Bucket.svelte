@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from "svelte";
+  import { taskMime } from "src/util/mimes";
+  import { afterUpdate, createEventDispatcher, onMount, tick } from "svelte";
   const dispatch = createEventDispatcher();
 
   export let name: string;
@@ -16,10 +17,11 @@
   }
 
   let ulEl: HTMLUListElement;
-  function dragover() {
-    dispatch("message", {
-      ulEl,
-    });
+  function dragover(event: DragEvent) {
+    if (event.dataTransfer && event.dataTransfer.types.includes(taskMime))
+      dispatch("message", {
+        ulEl,
+      });
   }
 
   let liEl: HTMLElement;
@@ -34,6 +36,21 @@
     liEl.setAttribute("draggable", "false");
     liEl.style.opacity = "";
     liEl.style.border = "";
+  }
+
+  onMount(() => {
+    window.addEventListener("resize", checkOverflow);
+    return () => window.removeEventListener("resize", checkOverflow);
+  });
+
+  afterUpdate(checkOverflow);
+
+  function checkOverflow() {
+    if (ulEl.scrollHeight > ulEl.clientHeight) {
+      ulEl.style.paddingRight = "4px";
+    } else {
+      ulEl.style.paddingRight = "";
+    }
   }
 </script>
 
@@ -52,6 +69,7 @@
   <div
     class="drag-handle"
     on:mousedown|stopPropagation={handleMouseDown}
+    on:mouseup={handleMouseUp}
     aria-hidden="true"
     on:click={() => liEl.focus()}
   />
@@ -81,7 +99,7 @@
     flex-shrink: 0;
     box-sizing: border-box;
     padding: 4px 12px;
-    height: calc(100% - 8px);
+    height: 100%;
   }
   div.drag-handle {
     background-image: url(/img/icons/horizontal-dragger.svg);
@@ -133,5 +151,21 @@
     padding: 6px 0px;
     list-style-type: none;
     overflow-y: auto;
+    max-height: 100%;
+  }
+  ul::-webkit-scrollbar {
+    width: 6px;
+  }
+  ul::-webkit-scrollbar-thumb {
+    background-color: rgba(70, 70, 70, 0.1);
+    border: transparent;
+    border-radius: 6px;
+  }
+  ul::-webkit-scrollbar-button {
+    height: 4px;
+  }
+  ul::-webkit-scrollbar-track {
+    background: rgba(155, 155, 155, 0.1);
+    border-radius: 8px;
   }
 </style>

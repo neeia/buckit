@@ -1,10 +1,5 @@
-import type Task from "./Task";
+import type Buckit from "./Buckit";
 
 export default interface Collection {
-  buckets: Bucket[];
+  buckets: Buckit[];
 };
-
-interface Bucket {
-  name: string;
-  tasks: Task[];
-}

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { tick } from "svelte";
+  import { tick } from "svelte";
   import AutoSizeArea from "./AutoSizeArea.svelte";
   import Checkbox from "./Checkbox.svelte";
 
@@ -7,11 +7,11 @@
   export let description: string;
   export let completed: boolean;
 
-  let asaEl: AutoSizeArea;
+  let nameEl: AutoSizeArea;
   export function focus() {
-    asaEl.focus();
+    nameEl.focus();
   }
-  
+
   let liEl: HTMLElement;
   async function handleMouseDown(e: MouseEvent) {
     if (e.button) return;
@@ -33,11 +33,12 @@
   bind:this={liEl}
   on:dragstart|stopPropagation
   on:dragend={handleMouseUp}
-  on:dragend|stopPropagation
+  on:dragend
 >
   <div
     class="drag-handle"
     on:mousedown|stopPropagation={handleMouseDown}
+    on:mouseup={handleMouseUp}
     aria-hidden="true"
     on:click={() => liEl.focus()}
   />
@@ -47,7 +48,7 @@
       className="title"
       placeholder="Untitled"
       bind:value={title}
-      bind:this={asaEl}
+      bind:this={nameEl}
     />
     <AutoSizeArea
       className="description"
@@ -59,7 +60,6 @@
     </div>
   </div>
 </li>
-<svelte:window on:mouseup={handleMouseUp} />
 
 <style>
   li {
